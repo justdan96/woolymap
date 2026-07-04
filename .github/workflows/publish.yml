@@ -1,0 +1,34 @@
+name: Publish
+on:
+  schedule:
+    - cron: '*/5 5-23 * * *'
+      timezone: "Europe/London"
+
+jobs:
+  uv:
+    name: python
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v6
+        with:
+          python-version-file: ".python-version"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          # Install a specific version of uv.
+          version: "0.11.26"
+      
+      - name: Run
+        env:
+          BW_ARRIVALS_DEPARTURES_URL: ${{ secrets.BW_ARRIVALS_DEPARTURES_URL }}
+          DVL_ARRIVALS_DEPARTURES_URL: ${{ secrets.DVL_ARRIVALS_DEPARTURES_URL }}
+          JAMCAM_N_URL: ${{ secrets.JAMCAM_N_URL }}
+          JAMCAM_S_URL: ${{ secrets.JAMCAM_S_URL }}
+          N2S_TIMETABLE_URL: ${{ secrets.N2S_TIMETABLE_URL }}
+          S2N_TIMETABLE_URL: ${{ secrets.S2N_TIMETABLE_URL }}
+        run: uv run --script woolymap.py

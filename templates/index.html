@@ -1,0 +1,311 @@
+<html>
+<head>
+<title>Woolymap</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+body {
+  background-color: white;
+  letter-spacing: -1px;
+  font-family: verdana, arial, sans-serif;
+  line-height: 1em;
+}
+
+h1 {
+  letter-spacing: -2px;
+  text-align: center;
+}
+
+th {
+  background-color: #ddd;
+}
+
+th, td {
+  border-bottom: 1px solid #ddd;
+}
+
+#button1 {
+  width: 100%;
+  border: none;
+  height: 100%;
+  background-color: none;
+  border-width: thick;
+  background-color: lightgrey;
+  border-radius: 5em;
+  padding: 0.1em;
+}
+
+
+@media screen and (min-width: 601px) {
+  th {
+    text-align: center;
+    font-size: 1.5em;
+  }
+
+  td {
+    text-align: center;
+    font-size: 1.5em;
+  }
+  
+  table {
+    width: 70%;
+    display: table;
+  }
+  
+  #button1 {
+    text-align: center;
+    font-size: 1.5em;
+  }
+  
+  h1 {
+    font-size: 2em;
+  }
+  
+  video {
+    padding: 1em;
+  }
+}
+
+@media screen and (max-width: 600px) {
+  th {
+    text-align: center;
+    font-size: 4vw;
+  }
+
+  td {
+    text-align: center;
+    font-size: 4vw;
+  }
+  
+  table {
+    width: 85%;
+    display: table;
+  }
+  
+  #button1 {
+    text-align: center;
+    font-size: 4vw;
+  }
+  
+  h1 {
+    font-size: 6vw;
+  }
+  
+  video {
+    padding: 2vw;
+  }
+}
+
+</style>
+<script type="text/javascript">
+function showAll() {
+  var x = document.getElementById("all");
+  x.style.display = "table";
+  var y = document.getElementById("from_north");
+  y.style.display = "none";
+  var z = document.getElementById("from_south");
+  z.style.display = "none";
+  var a = document.getElementById("timetable");
+  a.style.display = "table";
+  var b = document.getElementById("n_timetable");
+  b.style.display = "none";
+  var c = document.getElementById("s_timetable");
+  c.style.display = "none";
+  var j = document.getElementById("n_prediction");
+  j.style.display = "table-row";
+  var k = document.getElementById("s_prediction");
+  k.style.display = "table-row";
+  var q = document.getElementById("n_cam");
+  q.style.display = "table";
+  var r = document.getElementById("s_cam");
+  r.style.display = "table";
+} 
+
+function showSouth() {
+  var x = document.getElementById("all");
+  x.style.display = "none";
+  var y = document.getElementById("from_north");
+  y.style.display = "none";
+  var z = document.getElementById("from_south");
+  z.style.display = "table";
+  var a = document.getElementById("timetable");
+  a.style.display = "none";
+  var b = document.getElementById("n_timetable");
+  b.style.display = "none";
+  var c = document.getElementById("s_timetable");
+  c.style.display = "table";
+  var j = document.getElementById("n_prediction");
+  j.style.display = "none";
+  var k = document.getElementById("s_prediction");
+  k.style.display = "table-row";
+  var q = document.getElementById("n_cam");
+  q.style.display = "none";
+  var r = document.getElementById("s_cam");
+  r.style.display = "table";
+} 
+
+function showNorth() {
+  var x = document.getElementById("all");
+  x.style.display = "none";
+  var y = document.getElementById("from_north");
+  y.style.display = "table";
+  var z = document.getElementById("from_south");
+  z.style.display = "none";
+  var a = document.getElementById("timetable");
+  a.style.display = "none";
+  var b = document.getElementById("n_timetable");
+  b.style.display = "table";
+  var c = document.getElementById("s_timetable");
+  c.style.display = "none";
+  var j = document.getElementById("n_prediction");
+  j.style.display = "table-row";
+  var k = document.getElementById("s_prediction");
+  k.style.display = "none";
+  var q = document.getElementById("n_cam");
+  q.style.display = "table";
+  var r = document.getElementById("s_cam");
+  r.style.display = "none";
+} 
+</script>
+</head>
+<body onload="showAll();">
+<p align="center"><img src="woolymap-ferry2.jpg" width="65%" align="center"/></p>
+<p/>
+<h1>About</h1><p/>
+<div id="about" style="width: 75%; margin: auto;">
+<b>What is the Woolwich Ferry?</b><br/>
+The Woolwich Ferry is a free ferry boat service operated by TfL, and the eastern-most Thames river crossing in London. The ferry operates a regular service every day of the week (barring weather condition and technical issues), typically <b>6AM to 10PM, Monday to Sunday, including bank holidays</b>. The Woolwich Ferry takes cars, lorries, motorbikes and pedestrians - although bikes and pedestrians may prefer the Woolwich Foot Tunnel nearby.<p/>
+
+<b>What is Woolymap?</b><br/>
+Woolymap is a collection of information useful to users of the Woolwich Ferry. This includes a list of recent departures, the times of the next predicted departures from each port, the timetable information for the ferry and a feed from the traffic cameras nearest to the ferry terminals. This should prove useful to users of the Woolwich Ferry as the only information TfL currently provides is a static timetable, with no live departure information.<p/>
+
+<b>How Do I Use Woolymap?</b><br/>
+Use the buttons below to filter departures by the North Port, South Port or either. The most recent departures are shown to give an idea of how the service is running that day. The predicted departures are based on the last few journeys the ferry has taken that day. The timetable is taken straight from TfL. The jam cam feeds can be used to judge traffic at the port and if you are likely to get on the next departing ferry or will have to wait.<p/>
+
+<b>What Features May We See Next?</b><br/>
+I am capturing a log of each Woolwich Ferry departure and arrival every day, so in time I can build up a picture of what the ferry journey times typically look like and improve the prediction algorithm. I also want to present amended ferry timetables based on the true average departure times and whether a 2-ferry of 1-ferry service is running.<p/>
+</div>
+<p/>&nbsp;<p/>
+<h1>Filter Departures</h1><p/>
+<table width="85%" align="center" id="select">
+<tr>
+  <td width="33%"><button type="button" id="button1" onclick="javascript:showNorth()">From North</button></td>
+  <td width="33%"><button type="button" id="button1" onclick="javascript:showSouth()">From South</button></td>
+  <td width="33%"><button type="button" id="button1" onclick="javascript:showAll()">From Either</button></td>
+</tr>
+</table>
+<p/>&nbsp;<p/>
+<h1>Next Predicted Departures</h1>
+<p/>
+<table width="85%" align="center" id="prediction">
+<tr>
+<th>FROM PORT</th><th>DEPART TIME</th><th>TO PORT</th><th>ARRIVAL TIME</th><th>VESSEL</th>
+</tr>
+<tr id="n_prediction"><td>{{ n_prediction[0] }}</td><td>{{ n_prediction[1] }}</td><td>{{ n_prediction[2] }}</td><td>{{ n_prediction[3] }}</td><td>{{ n_prediction[4] }}</td></tr>
+<tr id="s_prediction"><td>{{ s_prediction[0] }}</td><td>{{ s_prediction[1] }}</td><td>{{ s_prediction[2] }}</td><td>{{ s_prediction[3] }}</td><td>{{ s_prediction[4] }}</td></tr>
+</table>
+<p/>&nbsp;<p/>
+<h1>Past Departures</h1> 
+<table width="85%" align="center" id="all">
+<tr>
+<th>FROM PORT</th><th>DEPART TIME</th><th>TO PORT</th><th>ARRIVAL TIME</th><th>VESSEL</th>
+</tr>
+{% for trip in trips %}
+<tr><td>{{ trip[0] }}</td><td>{{ trip[1] }}</td><td>{{ trip[2] }}</td><td>{{ trip[3] }}</td><td>{{ trip[4] }}</td></tr>
+{% endfor %}
+</table>
+</table>
+<table width="85%" align="center" id="from_north">
+<tr>
+<th>FROM PORT</th><th>DEPART TIME</th><th>TO PORT</th><th>ARRIVAL TIME</th><th>VESSEL</th>
+</tr>
+{% for trip in n_trips %}
+<tr><td>{{ trip[0] }}</td><td>{{ trip[1] }}</td><td>{{ trip[2] }}</td><td>{{ trip[3] }}</td><td>{{ trip[4] }}</td></tr>
+{% endfor %}
+</table>
+<table width="85%" align="center" id="from_south">
+<tr>
+<th>FROM PORT</th><th>DEPART TIME</th><th>TO PORT</th><th>ARRIVAL TIME</th><th>VESSEL</th>
+</tr>
+{% for trip in s_trips %}
+<tr><td>{{ trip[0] }}</td><td>{{ trip[1] }}</td><td>{{ trip[2] }}</td><td>{{ trip[3] }}</td><td>{{ trip[4] }}</td></tr>
+{% endfor %}
+</table>
+<p/>&nbsp;<p/>
+<h1>Ferry Map</h1>
+<p/>
+<table width="75%" align="center" id="map">
+<tr>
+<td>
+<script type="text/javascript">
+  var width="75%";
+  var height="400";
+  var latitude="51.4968";
+  var longitude="0.0627";
+  var zoom="16";
+  var fleet="f13060f57e56cb36d6e0dace61e98172";
+  var names=true;
+</script><script type="text/javascript" src="https://www.vesselfinder.com/aismap.js"></script>
+</td>
+</tr>
+</table>
+<p/>&nbsp;<p/>
+<h1>Timetabled Departures</h1>
+<p/>
+<table width="85%" align="center" id="timetable">
+<tr>
+<th>FROM PORT</th><th>DEPART TIME</th><th>TO PORT</th><th>ARRIVAL TIME</th><th>VESSEL</th>
+</tr>
+{% for trip in timetables %}
+<tr><td>{{ trip[0] }}</td><td>{{ trip[1] }}</td><td>{{ trip[2] }}</td><td>{{ trip[3] }}</td><td>{{ trip[4] }}</td></tr>
+{% endfor %}
+</table>
+<p/>
+<p/>
+<table width="85%" align="center" id="n_timetable">
+<tr>
+<th>FROM PORT</th><th>DEPART TIME</th><th>TO PORT</th><th>ARRIVAL TIME</th><th>VESSEL</th>
+</tr>
+{% for trip in n_timetables %}
+<tr><td>{{ trip[0] }}</td><td>{{ trip[1] }}</td><td>{{ trip[2] }}</td><td>{{ trip[3] }}</td><td>{{ trip[4] }}</td></tr>
+{% endfor %}
+</table>
+<p/>
+<p/>
+<table width="85%" align="center" id="s_timetable">
+<tr>
+<th>FROM PORT</th><th>DEPART TIME</th><th>TO PORT</th><th>ARRIVAL TIME</th><th>VESSEL</th>
+</tr>
+{% for trip in s_timetables %}
+<tr><td>{{ trip[0] }}</td><td>{{ trip[1] }}</td><td>{{ trip[2] }}</td><td>{{ trip[3] }}</td><td>{{ trip[4] }}</td></tr>
+{% endfor %}
+</table>
+<p/>&nbsp;<p/>
+<h1>Jam Cams</h1>
+<p/>
+<table width="85%" align="center" id="n_cam">
+<tr><th>NORTH PORT</th></tr>
+<tr>
+<td>
+<video width="75%" controls title="{{ n_cam['time'] }}">
+  <source src="{{ n_cam['video'] }}" type="video/mp4">
+</video> 
+</td>
+</tr>
+</table>
+<p/>
+
+<p/>
+<table width="85%" align="center" id="s_cam">
+<tr><th>SOUTH PORT</th></tr>
+<tr>
+<td>
+<video width="75%" controls title="{{ s_cam['time'] }}">
+  <source src="{{ s_cam['video'] }}" type="video/mp4">
+</video> 
+</td>
+</tr>
+</table>
+<p/>
+<i>Last Updated: {{ last_updated }}</i>
+</body>
+</html>
