@@ -2,9 +2,6 @@ name: Publish
 on:
   repository_dispatch:
     types: [publish]
-  schedule:
-    - cron: '*/5 5-23 * * *'
-      timezone: "Europe/London"
 
 permissions:
   contents: read
