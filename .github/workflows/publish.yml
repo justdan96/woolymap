@@ -35,6 +35,7 @@ jobs:
           JAMCAM_S_URL: ${{ secrets.JAMCAM_S_URL }}
           N2S_TIMETABLE_URL: ${{ secrets.N2S_TIMETABLE_URL }}
           S2N_TIMETABLE_URL: ${{ secrets.S2N_TIMETABLE_URL }}
+          TZ: Europe/London
         run: uv run --script woolymap.py
 
       - name: Setup Pages

@@ -107,7 +107,8 @@ def take_second(elem: list[Any]) -> datetime:
 
 
 def get_schedule_index() -> int:
-    logger.info("Checking bank holiday timetable for %s", date.today())
+    today = get_today()
+    logger.info("Checking bank holiday timetable for %s", today)
     try:
         session = get_session("https://www.gov.uk")
         response = session.get("https://www.gov.uk/bank-holidays.json", timeout=10)
@@ -126,7 +127,6 @@ def get_schedule_index() -> int:
         logger.error("Missing or malformed 'events' list in bank holiday JSON")
         return 0
 
-    today = date.today()
     for event in events:
         if not isinstance(event, dict) or "date" not in event:
             logger.warning("Skipping malformed holiday entry: %r", event)
@@ -142,7 +142,7 @@ def get_schedule_index() -> int:
         if event_date > today:
             break
 
-    weekday = datetime.today().isoweekday()
+    weekday = datetime.now(LONDON).isoweekday()
     if weekday <= 5:
         logger.info("Using weekday timetable")
         return 0
@@ -153,8 +153,12 @@ def get_schedule_index() -> int:
     return 2
 
 
+def get_today() -> date:
+    return datetime.now(LONDON).date()
+
+
 def get_time_as_datetime(value: time) -> datetime:
-    return datetime.combine(date.today(), value, tzinfo=LONDON)
+    return datetime.combine(get_today(), value, tzinfo=LONDON)
 
 
 def format_datetime(value: datetime | str) -> str:
@@ -202,7 +206,7 @@ def fetch_ferry_events() -> tuple[list[list[Any]], list[list[Any]]]:
                 logger.warning("Skipping ferry row with invalid date text: %s", row)
                 continue
 
-            if row_date != date.today():
+            if row_date != get_today():
                 continue
 
             today_events += 1
@@ -372,7 +376,7 @@ def fetch_tfl_timetables(trips: list[list[Any]], last_predicted_arrival: datetim
                 logger.warning("Skipping TfL journey with invalid time fields: %s (%r)", exc, journey)
                 continue
 
-            journey_time = datetime.combine(date.today(), time(hour, minute), tzinfo=LONDON)
+            journey_time = datetime.combine(get_today(), time(hour, minute), tzinfo=LONDON)
             if trips and journey_time >= trips[0][1] and journey_time <= last_predicted_arrival:
                 entry = [from_port, format_datetime(journey_time), to_port, format_datetime(journey_time + timedelta(minutes=5)), "NOT KNOWN"]
                 timetables.append(entry)
