@@ -5,33 +5,48 @@
 # dependencies = [
 #     "bs4>=0.0.2",
 #     "jinja2>=3.1.6",
+#     "pytz>=2026.2",
 #     "requests>=2.32.4",
 # ]
 # ///
 
-import getpass
-import logging
-import os
-import statistics
-from datetime import date, datetime, time, timedelta
-from pathlib import Path
-from typing import Any
-from zoneinfo import ZoneInfo
-
-import bs4
 import requests
-from jinja2 import Environment, FileSystemLoader
 from requests.adapters import HTTPAdapter, Retry
+import bs4
+import socket
+from datetime import time
+from datetime import timedelta
+from datetime import datetime
+from datetime import date
+import json
+from jinja2 import Environment
+from jinja2 import FileSystemLoader
+from sys import argv
+import os
+from sys import version_info
+import pytz
+import logging
+
+if version_info < (3, 7, 0):
+    # only required for versions of Python < 3.7
+    from backports.datetime_fromisoformat import MonkeyPatch
+
+    MonkeyPatch.patch_fromisoformat()
+
+os.environ["TZ"] = "Europe/London"
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-LONDON = ZoneInfo("Europe/London")
-
-ROOT = Path(__file__).resolve().parent
-TEMPLATE_DIR = ROOT / "templates"
-CONTENT_DIR = ROOT / "content"
+ROOT = os.path.dirname(os.path.abspath(__file__))
+TEMPLATE_DIR = os.path.join(ROOT, "templates")
+CONTENT_DIR = os.path.join(ROOT, "content")
 TEMPLATE_FILE = "index.html"
+CONTENT_FILE = "index.html"
+
+templateLoader = FileSystemLoader(searchpath=TEMPLATE_DIR)
+env = Environment(loader=templateLoader)
+template = env.get_template(TEMPLATE_FILE)
 
 def get_env_url(name: str) -> str:
     value = os.getenv(name)
@@ -89,413 +104,425 @@ def get_session(base_url: str) -> requests.Session:
     return session
 
 
-def round_time(dt: datetime | None = None, date_delta: timedelta = timedelta(minutes=1)) -> datetime:
-    if dt is None:
-        dt = datetime.now(LONDON)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=LONDON)
+def round_time(dt=None, dateDelta=timedelta(minutes=1)):
+    """Round a datetime object to a multiple of a timedelta
+    dt : datetime.datetime object, default now.
+    dateDelta : timedelta object, we round to a multiple of this, default 1 minute.
+    Author: Thierry Husson 2012 - Use it as you want but don't blame me.
+            Stijn Nevens 2014 - Changed to use only datetime objects as variables
+    """
+    roundTo = dateDelta.total_seconds()
 
-    base = dt.replace(hour=0, minute=0, second=0, microsecond=0)
-    seconds_since_midnight = int((dt - base).total_seconds())
-    round_to = int(date_delta.total_seconds())
-    rounding = ((seconds_since_midnight + round_to / 2) // round_to) * round_to
-    return dt + timedelta(seconds=rounding - seconds_since_midnight)
+    if dt == None:
+        dt = datetime.now()
+    seconds = (dt - dt.min).seconds
+    # // is a floor division, not a comment on following line:
+    rounding = (seconds + roundTo / 2) // roundTo * roundTo
+    return dt + timedelta(0, rounding - seconds, -dt.microsecond)
 
 
-def take_second(elem: list[Any]) -> datetime:
+# use second row for sorting
+def take_second(elem):
     return elem[1]
 
 
-def get_schedule_index() -> int:
-    today = get_today()
-    logger.info("Checking bank holiday timetable for %s", today)
+# return the schedule, Mon-Fri, Sat and public holidays, Sun
+def schedule():
     try:
         session = get_session("https://www.gov.uk")
         response = session.get("https://www.gov.uk/bank-holidays.json", timeout=10)
         response.raise_for_status()
-        data = response.json()
-    except (requests.RequestException, ValueError, KeyError) as exc:
-        logger.warning("Bank holiday lookup failed: %s", exc)
-        return 0
+        ph_json = response.json()
+    except requests.exceptions.RequestException as e:
+        logger.warning("Bank holiday lookup failed: %s", e)
 
-    if not isinstance(data, dict):
-        logger.error("Unexpected bank holiday payload type: %s", type(data).__name__)
-        return 0
+    ph_json = json.loads(response.text)
 
-    events = data.get("england-and-wales", {}).get("events", [])
-    if not isinstance(events, list):
-        logger.error("Missing or malformed 'events' list in bank holiday JSON")
-        return 0
-
-    for event in events:
-        if not isinstance(event, dict) or "date" not in event:
-            logger.warning("Skipping malformed holiday entry: %r", event)
-            continue
-        try:
-            event_date = date.fromisoformat(event["date"])
-        except ValueError:
-            logger.warning("Skipping invalid holiday date: %r", event.get("date"))
-            continue
-        if event_date == today:
-            logger.info("Today is a public holiday; using holiday timetable")
+    # the JSON just lists all dates, rather than breaking them down by year
+    for ph in ph_json["england-and-wales"]["events"]:
+        phdate = ph["date"]
+        phdate = date.fromisoformat(phdate)
+        if phdate == date.today():
+            # public holiday today, use the right timetable
             return 1
-        if event_date > today:
+        elif phdate > date.today():
+            # if we are in the future, just stop the loop
             break
 
-    weekday = datetime.now(LONDON).isoweekday()
-    if weekday <= 5:
+    wd = datetime.today().isoweekday()
+    if wd >= 1 and wd <= 5:
         logger.info("Using weekday timetable")
         return 0
-    if weekday == 6:
+    elif wd == 6:
         logger.info("Using Saturday timetable")
         return 1
-    logger.info("Using Sunday timetable")
-    return 2
+    else:
+        logger.info("Using Sunday timetable")
+        return 2
 
 
-def get_today() -> date:
-    return datetime.now(LONDON).date()
+# convert a time object to a datetime object - for consistency we want to only use datetime
+def get_time_as_datetime(time1):
+    dt = datetime.strptime(datetime.now().strftime("%Y-%m-%d ") + time1.strftime("%H:%M"), "%Y-%m-%d %H:%M")
+    dt = pytz.timezone("Europe/London").localize(dt)
+    return dt
 
 
-def get_time_as_datetime(value: time) -> datetime:
-    return datetime.combine(get_today(), value, tzinfo=LONDON)
+def munge_local_time_to_utc(loctime):
+    localsample = pytz.timezone("Europe/London").localize(datetime.now())
+    if localsample.dst() != None:
+        offset = localsample.dst()
+        utctime = loctime - offset
+    else:
+        utctime = loctime
+    utctime = pytz.timezone("Europe/London").localize(utctime)
+    return utctime
 
 
-def format_datetime(value: datetime | str) -> str:
-    if isinstance(value, str):
-        return value
-    if value.tzinfo is None:
-        value = value.replace(tzinfo=LONDON)
-    return value.astimezone(LONDON).strftime("%H:%M")
-
-
-def fetch_ferry_events() -> tuple[list[list[Any]], list[list[Any]]]:
-    arrivals: list[list[Any]] = []
-    departures: list[list[Any]] = []
-
-    for ferry_url in FERRY_URLS:
-        try:
-            session = get_session(ferry_url)
-            response = session.get(ferry_url, timeout=10)
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            logger.warning("Ferry page fetch failed for %s: %s", format_env_url(ferry_url), exc)
-            continue
-
-        logger.info("Fetched ferry page: %s", format_env_url(ferry_url))
-        soup = bs4.BeautifulSoup(response.text, "html.parser")
-        tbody = soup.find("tbody")
-        if tbody is None:
-            logger.error("No tbody found in ferry page %s", format_env_url(ferry_url))
-            continue
-
-        rows = tbody.find_all("tr")
-        logger.info("Parsing %d ferry rows from %s", len(rows), format_env_url(ferry_url))
-        today_events = 0
-
-        for row in rows:
-            cells = row.find_all("td")
-            if len(cells) < 5:
-                logger.debug("Skipping ferry row with %d cells: %s", len(cells), row)
-                continue
-
-            try:
-                row_date_text = cells[2].get_text(" ", strip=True).split()[0]
-                row_date = date.fromisoformat(row_date_text)
-            except (IndexError, ValueError):
-                logger.warning("Skipping ferry row with invalid date text: %s", row)
-                continue
-
-            if row_date != get_today():
-                continue
-
-            today_events += 1
-            try:
-                direction = cells[1].get_text(" ", strip=True)
-                if not direction:
-                    raise ValueError("missing direction")
-
-                time_element = cells[2].find("b")
-                if time_element is None:
-                    raise ValueError("missing time element")
-                time_text = time_element.get_text(" ", strip=True)
-                departure_time = get_time_as_datetime(time.fromisoformat(time_text))
-
-                port = cells[3].get_text(" ", strip=True)
-                if not port:
-                    raise ValueError("missing port")
-                port = port.replace("WOOLWICH", "South Port").replace("SILVERTOWN", "North Port")
-
-                vessel_link = cells[4].find("a")
-                if vessel_link is None:
-                    raise ValueError("missing vessel link")
-                vessel_name = vessel_link.get_text(" ", strip=True)
-                vessel = "BW" if vessel_name == "BEN WOOLLACOTT" else "DVL"
-            except (AttributeError, IndexError, ValueError) as exc:
-                logger.warning("Skipping malformed ferry row from %s: %s (%s)", format_env_url(ferry_url), exc, row)
-                continue
-
-            entry = [direction, departure_time, port, vessel]
-            if direction == "Departure":
-                departures.append(entry)
-            else:
-                arrivals.append(entry)
-
-        logger.info("Found %d today's ferry events from %s", today_events, format_env_url(ferry_url))
-
-    return arrivals, departures
-
-
-def build_trips(arrivals: list[list[Any]], departures: list[list[Any]]) -> tuple[list[list[Any]], list[list[Any]], list[list[Any]]]:
-    sorted_arrivals = sorted(arrivals, key=take_second)
-    sorted_departures = sorted(departures, key=take_second)
-
-    trips: list[list[Any]] = []
-    north_trips: list[list[Any]] = []
-    south_trips: list[list[Any]] = []
-
-    for departure in sorted_departures:
-        from_port = departure[2]
-        vessel = departure[3]
-        to_port = "North Port" if from_port == "South Port" else "South Port"
-        to_time: datetime | str = "In Transit"
-
-        for arrival in sorted_arrivals:
-            if arrival[1] >= departure[1] and arrival[2] == to_port and arrival[3] == vessel:
-                to_time = arrival[1]
-                break
-
-        trip = [from_port, departure[1], to_port, to_time, vessel]
-        trips.append(trip)
-        if not isinstance(to_time, datetime):
-            logger.info("No matching arrival found for %s departure at %s", from_port, format_datetime(departure[1]))
-        if from_port == "South Port":
-            south_trips.append([from_port, format_datetime(departure[1]), to_port, format_datetime(to_time) if isinstance(to_time, datetime) else to_time, vessel])
+def convert_datetime_to_hm(dt):
+    if type(dt) != str:
+        # all the times we process are in the London timezone:
+        # 1. Remove any tzinfo already defined
+        # 2. Localise the datetime object to London timezone
+        # 3. Get the current DST offset (if any) and add it to the datetime object
+        # 4. Output the new datetime as a string with HH:MM format
+        dt = dt.replace(tzinfo=None)
+        dt = pytz.timezone("Europe/London").localize(dt)
+        if dt.dst() != None:
+            offset = dt.dst()
+            newDt = dt + offset
         else:
-            north_trips.append([from_port, format_datetime(departure[1]), to_port, format_datetime(to_time) if isinstance(to_time, datetime) else to_time, vessel])
+            newDt = dt
+        return newDt.strftime("%H:%M")
+    else:
+        # if it is a string just print directly
+        return dt
 
-    return trips, north_trips, south_trips
+arrivals = []
+departures = []
 
+for ferry in FERRY_URLS:
+    try:
+        session = get_session(ferry)
+        response = session.get(ferry, timeout=10)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        logger.warning("Ferry page fetch failed for %s: %s", format_env_url(ferry), exc)
+        continue
+    logger.info("Fetched ferry page: %s", format_env_url(ferry))
 
-def build_predictions(trips: list[list[Any]]) -> tuple[list[Any], list[Any], datetime]:
-    if not trips:
-        return ["North Port", "TBC", "South Port", "TBC", "NA"], ["South Port", "TBC", "North Port", "TBC", "NA"], datetime.now(LONDON) + timedelta(minutes=120)
+    result = bs4.BeautifulSoup(response.text, "html.parser")
 
-    reversed_trips = list(reversed(trips))
-    last_from: list[list[Any] | None] = [None, None]
+    tbody = result.find("tbody")
+    if tbody is None:
+        logger.error("No tbody found in ferry page %s", format_env_url(ferry))
+        continue
 
-    for trip in reversed_trips:
-        if trip[0] == "South Port" and last_from[0] is None:
-            last_from[0] = trip
-        elif trip[0] == "North Port" and last_from[1] is None:
-            last_from[1] = trip
+    rows = tbody.find_all("tr")
+    logger.info("Parsing %d ferry rows from %s", len(rows), format_env_url(ferry))
+    today_events = 0
 
-        if last_from[0] is not None and last_from[1] is not None:
+    for row in rows:
+        row_html = bs4.BeautifulSoup(str(row), "html.parser")
+        # check if the date of the trip is today
+        thisdate = row_html.select("tr > td:nth-of-type(3)")[0].text.split()[0]
+        thisdate = date.fromisoformat(thisdate)
+        if thisdate == date.today():
+            # get if its an arrival or departure, the time, port and vessel
+            arr_div = row_html.select("tr > td:nth-of-type(2)")[0].string
+            thistime = row_html.select("tr > td:nth-of-type(3) > b")[0].string
+            thistime = get_time_as_datetime(time.fromisoformat(thistime))
+            port = row_html.select("tr > td:nth-of-type(4) > a")[0].text.strip()
+            port = port.replace("WOOLWICH", "South Port")
+            port = port.replace("SILVERTOWN", "North Port")
+            vessel = row_html.select("tr > td:nth-of-type(5) > span > a")[0].string
+            if vessel == "BEN WOOLLACOTT":
+                vessel = "BW"
+            else:
+                vessel = "DVL"
+            # add it to either the departures or arrival array
+            if arr_div == "Departure":
+                departures.append([str(arr_div), (thistime), str(port), str(vessel)])
+            else:
+                arrivals.append([str(arr_div), (thistime), str(port), str(vessel)])
+            today_events += 1
+
+    logger.info("Found %d today's ferry events from %s", today_events, format_env_url(ferry))
+
+# sort both arrays by the time
+sorted_arrivals = sorted(arrivals, key=take_second)
+sorted_departures = sorted(departures, key=take_second)
+logger.debug("ARRIVALS:")
+logger.debug(sorted_arrivals)
+logger.debug("DEPARTURES:")
+logger.debug(sorted_departures)
+
+trips = []
+n_trips = []
+s_trips = []
+
+# for each departure
+for departure in sorted_departures:
+    from_time = departure[1]
+    from_port = departure[2]
+    vessel = departure[3]
+
+    # get the opposite port
+    if from_port == "South Port":
+        to_port = "North Port"
+    else:
+        to_port = "South Port"
+    to_time = "In Transit"
+
+    # check for the first arrival after the departure, to the opposite port and on that vessel
+    for arrival in sorted_arrivals:
+        if arrival[1] >= from_time and arrival[2] == to_port and arrival[3] == vessel:
+            # set the arrival time
+            to_time = arrival[1]
             break
 
-    north_prediction = ["North Port", "TBC", "South Port", "TBC", "NA"]
-    south_prediction = ["South Port", "TBC", "North Port", "TBC", "NA"]
-    last_predicted_arrival = datetime.now(LONDON) + timedelta(minutes=120)
+    if not isinstance(to_time, datetime):
+        logger.info("No matching arrival found for %s departure at %s", from_port, str(departure[1]))
 
-    for last_trip in last_from:
-        if last_trip is None:
-            continue
+    # add the full departure and arrival to a single line in the array
+    trips.append([str(from_port), from_time, str(to_port), to_time, str(vessel)])
+    if from_port == "South Port":
+        s_trips.append([str(from_port), convert_datetime_to_hm(from_time), str(to_port), convert_datetime_to_hm(to_time), str(vessel)])
+    else:
+        n_trips.append([str(from_port), convert_datetime_to_hm(from_time), str(to_port), convert_datetime_to_hm(to_time), str(vessel)])
 
-        same_port_history = [trip for trip in trips if trip[0] == last_trip[0] and isinstance(trip[3], datetime)]
-        if len(same_port_history) < 2:
-            continue
+# try to make a simple prediction of the next departures from each port
 
-        docked_samples: list[float] = []
-        travel_samples: list[float] = []
-        for current_trip, previous_trip in zip(same_port_history, same_port_history[1:]):
-            docked_samples.append((current_trip[1] - previous_trip[1]).total_seconds())
-            travel_samples.append((current_trip[3] - current_trip[1]).total_seconds())
+# create a reversed array of trips
+rev_trips = trips[::-1]
 
-        avg_docked = int(statistics.fmean(docked_samples[:5])) if docked_samples else 0
-        avg_travel = int(statistics.fmean(travel_samples[:5])) if travel_samples else 0
+# get the last trip from the south and the north port
+last_from = [[], []]
+for vess_trip in rev_trips:
+    if vess_trip[0] == "South Port" and last_from[0] == []:
+        last_from[0] = vess_trip
+    elif vess_trip[0] == "North Port" and last_from[1] == []:
+        last_from[1] = vess_trip
 
-        next_departure = last_trip[1] + timedelta(seconds=avg_docked)
-        next_arrival = last_trip[1] + timedelta(seconds=avg_docked + avg_travel)
-        prediction = [last_trip[0], format_datetime(next_departure), last_trip[2], format_datetime(next_arrival), last_trip[4]]
+    if last_from[0] != [] and last_from[1] != []:
+        break
 
-        if last_trip[0] == "North Port":
-            north_prediction = prediction
+# take the average time docked and the average time travelling with an average of 5 journeys
+trip_history = 0
+avg_time_docked = 0
+avg_time_travelling = 0
+
+# create prediction arrays
+north_prediction = []
+south_prediction = []
+
+# we use this for generating timetables that include our predictions
+last_predicted_arrival = datetime.now(tz=pytz.timezone("Europe/London"))
+logger.debug('Last Predicted Trip:')
+logger.debug(last_predicted_arrival)
+
+# do this for the last ferry from south and north terminal
+for last in last_from:
+    # loop over all past trips, at least 5 times for each ferry and terminal
+    for past_trip in rev_trips:
+        if trip_history == 5:
+            break
+
+        # the last array is empty, just break out of the loop early
+        if len(last) == 0:
+            break
+
+        # the from port is the same and the ferry isn't in transit
+        if past_trip[0] == last[0] and past_trip[3] != "In Transit":
+            # loop over the trips again
+            for next_trip in rev_trips:
+                # make sure this is a previous journey of the same type
+                if next_trip[0] == past_trip[0] and next_trip[3] != "In Transit" and next_trip[1] < past_trip[1]:
+                    # get the time docked and time travelling
+                    docked = (past_trip[1] - next_trip[1]).seconds
+                    travelling = (next_trip[3] - next_trip[1]).seconds
+
+                    # if it's the first one just set the average to this value
+                    if avg_time_docked == 0:
+                        avg_time_docked = docked
+                    else:
+                        # otherwise create a simple average of this value and the previous one
+                        avg_time_docked = (avg_time_docked + docked) / 2
+
+                    # if it's the first one just set the average to this value
+                    if avg_time_travelling == 0:
+                        avg_time_travelling = travelling
+                    else:
+                        # otherwise create a simple average of this value and the previous one
+                        avg_time_travelling = (avg_time_travelling + travelling) / 2
+
+                    # we break out of the loop at the first opportunity
+                    trip_history = trip_history + 1
+                    break
+
+    # use the averages to predict when the next ferry will depart and arrive
+    avg_time_docked = int(avg_time_docked)
+    logger.debug("Average Time Docked: " + str(avg_time_docked))
+    avg_time_travelling = int(avg_time_travelling)
+
+    if len(last) == 0:
+        north_prediction = ["North Port", "TBC", "South Port", "TBC", "NA"]
+        south_prediction = ["South Port", "TBC", "North Port", "TBC", "NA"]
+        last_predicted_arrival = round_time() + timedelta(minutes=120)
+    else:
+        # round the departures and arrivals to the next minute, to fit in with the rest of the timetable
+        next_departure = convert_datetime_to_hm(last[1] + timedelta(seconds=avg_time_docked))
+        next_arrival = convert_datetime_to_hm(last[1] + timedelta(seconds=avg_time_docked + avg_time_travelling))
+        last_predicted_arrival_this = last[1] + timedelta(seconds=avg_time_docked + avg_time_travelling)
+        last_predicted_arrival_this = last_predicted_arrival_this.replace(tzinfo=pytz.timezone("Europe/London"))
+        last_predicted_arrival = last_predicted_arrival.replace(tzinfo=pytz.timezone("Europe/London"))
+
+        if last_predicted_arrival_this > last_predicted_arrival:
+            last_predicted_arrival = last_predicted_arrival_this
+
+        if last[0] == "North Port":
+            north_prediction = [last[0], next_departure, last[2], next_arrival, last[4]]
         else:
-            south_prediction = prediction
-
-        if next_arrival > last_predicted_arrival:
-            last_predicted_arrival = next_arrival
-
-    return north_prediction, south_prediction, last_predicted_arrival
+            south_prediction = [last[0], next_departure, last[2], next_arrival, last[4]]
 
 
-def fetch_tfl_timetables(trips: list[list[Any]], last_predicted_arrival: datetime) -> tuple[list[list[Any]], list[list[Any]], list[list[Any]]]:
-    timetables: list[list[Any]] = []
-    north_timetables: list[list[Any]] = []
-    south_timetables: list[list[Any]] = []
-    schedule_index = get_schedule_index()
+tt = TFL_TIMETABLE_URLS
 
-    for timetable in TFL_TIMETABLE_URLS:
-        try:
-            session = get_session(timetable["url"])
-            response = session.get(timetable["url"], timeout=20)
-            response.raise_for_status()
-            payload = response.json()
-        except (requests.RequestException, ValueError) as exc:
-            logger.warning("TfL timetable fetch failed for %s: %s", format_env_url(timetable["url"]), exc)
-            continue
+# for each timetable, north to south and south to north, load the JSON into an object we can use
+for timetable in tt:
+    try:
+        session = get_session(timetable["url"])
+        response = session.get(timetable["url"], timeout=20)
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning("TfL timetable fetch failed for %s: %s", format_env_url(timetable["url"]), exc)
+        continue
 
-        if not isinstance(payload, dict):
-            logger.error("Unexpected TfL timetable payload type for %s: %s", format_env_url(timetable["url"]), type(payload).__name__)
-            continue
+    timetable["json"] = payload
 
-        try:
-            routes = payload["timetable"]["routes"]
-            schedules = routes[0]["schedules"]
-            known_journeys = schedules[schedule_index]["knownJourneys"]
-        except (KeyError, IndexError, TypeError) as exc:
-            logger.error("Unexpected TfL timetable structure for %s: %s", format_env_url(timetable["url"]), exc)
-            continue
+our_timetable = []
+n_timetable = []
+s_timetable = []
+todays_schedule = schedule()
 
-        if not isinstance(known_journeys, list):
-            logger.error("Expected 'knownJourneys' list in TfL payload for %s", format_env_url(timetable["url"]))
-            continue
+# get the timetables in both directions
+for journ_dir in tt:
+    timetable_journey_count = 0
+    if journ_dir["direction"] == "N2S":
+        from_port = "North Port"
+        to_port = "South Port"
+    else:
+        from_port = "South Port"
+        to_port = "North Port"
 
-        logger.info("Fetched %d TfL journeys for %s", len(known_journeys), timetable["direction"])
-        from_port = "North Port" if timetable["direction"] == "N2S" else "South Port"
-        to_port = "South Port" if timetable["direction"] == "N2S" else "North Port"
+    # check the timetables for today
+    for journey in journ_dir["json"]["timetable"]["routes"][0]["schedules"][todays_schedule]["knownJourneys"]:
+        journey_time = datetime.combine(date.today(), time.fromisoformat(journey["hour"].zfill(2) + ":" + journey["minute"].zfill(2)), tzinfo=pytz.timezone("Europe/London"))
 
-        for journey in known_journeys:
-            if not isinstance(journey, dict):
-                logger.warning("Skipping malformed TfL journey entry: %r", journey)
-                continue
-            try:
-                hour = int(journey["hour"])
-                minute = int(journey["minute"])
-            except (KeyError, TypeError, ValueError) as exc:
-                logger.warning("Skipping TfL journey with invalid time fields: %s (%r)", exc, journey)
-                continue
+        # if the timetable is between the first and last ferry trips captures, add it to the array
+        # this part doesn't fucking work at all I guess!
+        if len(trips) >= 1:
+            first_trip = trips[0][1]
 
-            journey_time = datetime.combine(get_today(), time(hour, minute), tzinfo=LONDON)
-            if trips and journey_time >= trips[0][1] and journey_time <= last_predicted_arrival:
-                entry = [from_port, format_datetime(journey_time), to_port, format_datetime(journey_time + timedelta(minutes=5)), "NOT KNOWN"]
-                timetables.append(entry)
+            if journey_time >= (first_trip) and journey_time <= last_predicted_arrival:
+                logger.debug('Journey Time:')
+                logger.debug(journey_time)
+                logger.debug(journey_time.tzinfo)
+                logger.debug('First Trip:')
+                logger.debug(trips[0][1])
+                logger.debug('Last Trip:')
+                logger.debug(last_predicted_arrival)
+                our_timetable.append([str(from_port), convert_datetime_to_hm(journey_time), str(to_port), convert_datetime_to_hm(journey_time + timedelta(minutes=5)), "NOT KNOWN"])
                 if from_port == "North Port":
-                    north_timetables.append(entry)
+                    n_timetable.append([str(from_port), convert_datetime_to_hm(journey_time), str(to_port), convert_datetime_to_hm(journey_time + timedelta(minutes=5)), "NOT KNOWN"])
                 else:
-                    south_timetables.append(entry)
-
-    sorted_timetables = sorted(timetables, key=take_second, reverse=True)
-    sorted_n_timetables = sorted(north_timetables, key=take_second, reverse=True)
-    sorted_s_timetables = sorted(south_timetables, key=take_second, reverse=True)
-
-    return sorted_timetables[:5], sorted_n_timetables[:5], sorted_s_timetables[:5]
-
-
-def fetch_jamcams() -> tuple[dict[str, Any], dict[str, Any]]:
-    cam_data: tuple[dict[str, Any], dict[str, Any]] = ({"cam": "N", "video": "", "time": ""}, {"cam": "S", "video": "", "time": ""})
-
-    for idx, jamcam in enumerate(cam_data):
-        try:
-            session = get_session(JAMCAM_URLS[idx]["url"])
-            response = session.get(JAMCAM_URLS[idx]["url"], timeout=10)
-            response.raise_for_status()
-            payload = response.json()
-        except (requests.RequestException, ValueError) as exc:
-            logger.warning("JamCam fetch failed for %s: %s", format_env_url(JAMCAM_URLS[idx]["url"]), exc)
-            jamcam["video"] = "https://example.com/video_not_found.mp4"
-            jamcam["time"] = format_datetime(datetime.now(LONDON))
-            continue
-
-        if not isinstance(payload, dict):
-            logger.error("Unexpected JamCam payload type for %s: %s", format_env_url(JAMCAM_URLS[idx]["url"]), type(payload).__name__)
-            jamcam["video"] = "https://example.com/video_not_found.mp4"
-            jamcam["time"] = format_datetime(datetime.now(LONDON))
-            continue
-
-        props = payload.get("additionalProperties", [])
-        if not isinstance(props, list):
-            logger.error("JamCam metadata for %s is not a list", format_env_url(JAMCAM_URLS[idx]["url"]))
-            jamcam["video"] = "https://example.com/video_not_found.mp4"
-            jamcam["time"] = format_datetime(datetime.now(LONDON))
-            continue
-
-        for prop in props:
-            if not isinstance(prop, dict):
-                logger.warning("Skipping malformed jamcam property: %r", prop)
-                continue
-            if prop.get("key") == "videoUrl":
-                jamcam["video"] = prop.get("value", "") + f"?nocache={datetime.now()}"
-                try:
-                    jamcam_dt = datetime.strptime(prop["modified"], "%Y-%m-%dT%H:%M:%S.%fZ")
-                    jamcam["time"] = format_datetime(jamcam_dt)
-                except (KeyError, ValueError):
-                    logger.warning("JamCam timestamp missing or invalid for %s", format_env_url(JAMCAM_URLS[idx]["url"]))
-                    jamcam["time"] = format_datetime(datetime.now(LONDON))
-                break
+                    s_timetable.append([str(from_port), convert_datetime_to_hm(journey_time), str(to_port), convert_datetime_to_hm(journey_time + timedelta(minutes=5)), "NOT KNOWN"])
+                timetable_journey_count += 1
         else:
-            logger.warning("JamCam video URL not found for %s", format_env_url(JAMCAM_URLS[idx]["url"]))
-            jamcam["video"] = "https://example.com/video_not_found.mp4"
-            jamcam["time"] = format_datetime(datetime.now(LONDON))
+            first_trip = round_time() - timedelta(minutes=60)
+            last_predicted_arrival = round_time() + timedelta(minutes=120)
+    logger.info("Found %d timetabled journeys for %s", timetable_journey_count, journ_dir["direction"])
 
-    return cam_data[0], cam_data[1]
+# sort the timetables and then print them out
+sorted_timetables = sorted(our_timetable, key=take_second)
+sorted_timetables.reverse()
+sorted_n_timetables = sorted(n_timetable, key=take_second)
+sorted_n_timetables.reverse()
+sorted_s_timetables = sorted(s_timetable, key=take_second)
+sorted_s_timetables.reverse()
 
+if len(sorted_timetables) > 5:
+    del sorted_timetables[5:]
 
-def render_page(trips: list[list[Any]], north_trips: list[list[Any]], south_trips: list[list[Any]], timetables: list[list[Any]], north_timetables: list[list[Any]], south_timetables: list[list[Any]], north_prediction: list[Any], south_prediction: list[Any], north_cam: dict[str, Any], south_cam: dict[str, Any], updated: datetime) -> None:
-    env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
-    template = env.get_template(TEMPLATE_FILE)
+if len(sorted_n_timetables) > 5:
+    del sorted_n_timetables[5:]
 
-    output_path = CONTENT_DIR / "index.html"
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    rendered = template.render(
-        trips=trips,
-        n_trips=north_trips,
-        s_trips=south_trips,
-        timetables=timetables,
-        n_timetables=north_timetables,
-        s_timetables=south_timetables,
-        n_prediction=north_prediction,
-        s_prediction=south_prediction,
-        n_cam=north_cam,
-        s_cam=south_cam,
-        last_updated=updated,
+if len(sorted_s_timetables) > 5:
+    del sorted_s_timetables[5:]
+ 
+sorted_timetables.reverse()
+sorted_n_timetables.reverse()
+sorted_s_timetables.reverse() 
+
+jmcm = JAMCAM_URLS
+
+# for each cam, north and south, load the JSON into an object we can use
+for jamcam in jmcm:
+    try:
+        session = get_session(jamcam["url"])
+        response = session.get(jamcam["url"], timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning("JamCam fetch failed for %s: %s", format_env_url(jamcam["url"]), exc)
+        continue
+    # just in case the jamcam API is not working...
+    if "additionalProperties" in payload:
+        for ap in payload["additionalProperties"]:
+            if ap["key"] == "videoUrl":
+                jamcam["video"] = ap["value"] + "?nocache=" + str(datetime.now())
+                jamcam_dt = datetime.strptime(ap["modified"], "%Y-%m-%dT%H:%M:%S.%fZ")
+                jamcam["time"] = convert_datetime_to_hm(jamcam_dt)
+                logger.info("JamCam URL found for " + jamcam["cam"])
+                break
+    else:
+        jamcam["video"] = "https://example.com/video_not_found.mp4"
+        jamcam["time"] = convert_datetime_to_hm(datetime.now())
+
+filename = os.path.join(CONTENT_DIR, CONTENT_FILE)
+
+# get the times in a shorter format
+for trip in trips:
+    trip[1] = convert_datetime_to_hm(trip[1])
+    trip[3] = convert_datetime_to_hm(trip[3])
+
+trips.reverse()
+if len(trips) > 5:
+    del trips[5:]
+
+n_trips.reverse()
+if len(n_trips) > 5:
+    del n_trips[5:]
+
+s_trips.reverse()
+if len(s_trips) > 5:
+    del s_trips[5:]
+
+updated = datetime.now()
+
+with open(filename, "w") as fh:
+    fh.write(template.render(
+        trips=trips, 
+        n_trips=n_trips, 
+        s_trips=s_trips, 
+        timetables=sorted_timetables, 
+        n_timetables=sorted_n_timetables, 
+        s_timetables=sorted_s_timetables, 
+        n_prediction=north_prediction, 
+        s_prediction=south_prediction, 
+        n_cam=jmcm[0], 
+        s_cam=jmcm[1], 
+        last_updated=updated)
     )
-    output_path.write_text(rendered, encoding="utf-8")
-    logger.info("Wrote rendered page to %s", output_path)
-
-
-def main() -> None:
-    arrivals, departures = fetch_ferry_events()
-    trips, north_trips, south_trips = build_trips(arrivals, departures)
-
-    north_prediction, south_prediction, last_predicted_arrival = build_predictions(trips)
-    timetables, north_timetables, south_timetables = fetch_tfl_timetables(trips, last_predicted_arrival)
-    north_cam, south_cam = fetch_jamcams()
-
-    trips = [list(trip) for trip in trips]
-    for trip in trips:
-        trip[1] = format_datetime(trip[1])
-        trip[3] = format_datetime(trip[3]) if isinstance(trip[3], datetime) else trip[3]
-
-    north_trips = list(reversed(north_trips[-5:]))
-    south_trips = list(reversed(south_trips[-5:]))
-    trips = list(reversed(trips[-5:]))
-
-    updated = datetime.now(LONDON)
-    render_page(
-        trips=trips,
-        north_trips=north_trips,
-        south_trips=south_trips,
-        timetables=timetables,
-        north_timetables=north_timetables,
-        south_timetables=south_timetables,
-        north_prediction=north_prediction,
-        south_prediction=south_prediction,
-        north_cam=north_cam,
-        south_cam=south_cam,
-        updated=updated,
-    )
-
-
-if __name__ == "__main__":
-    main()
+logger.info("Wrote rendered page to %s", filename)
