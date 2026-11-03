@@ -4,13 +4,16 @@
 # requires-python = ">=3.8"
 # dependencies = [
 #     "bs4>=0.0.2",
+#     "cloudscraper>=1.2.71",
 #     "jinja2>=3.1.6",
 #     "pytz>=2026.2",
 #     "requests>=2.32.4",
 # ]
 # ///
 
-import requests
+import cloudscraper
+from requests.compat import urlparse as requests_urlparse
+from requests import exceptions as requests_exceptions
 from requests.adapters import HTTPAdapter, Retry
 import bs4
 import socket
@@ -91,16 +94,10 @@ JAMCAM_URLS = (
 )
 
 
-def get_session(base_url: str) -> requests.Session:
-    session = requests.Session()
+def get_session() -> cloudscraper.CloudScraper:
+    session = cloudscraper.create_scraper()
     retries = Retry(total=5, backoff_factor=1, status_forcelist=[502, 503, 504])
     session.mount("https://", HTTPAdapter(max_retries=retries))
-    session.headers.update(
-        {
-            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Ubuntu Chromium/34.0.1847.116 Chrome/34.0.1847.116 Safari/537.36",
-            "Host": requests.compat.urlparse(base_url).netloc,
-        }
-    )
     return session
 
 
@@ -129,11 +126,11 @@ def take_second(elem):
 # return the schedule, Mon-Fri, Sat and public holidays, Sun
 def schedule():
     try:
-        session = get_session("https://www.gov.uk")
+        session = get_session()
         response = session.get("https://www.gov.uk/bank-holidays.json", timeout=10)
         response.raise_for_status()
         ph_json = response.json()
-    except requests.exceptions.RequestException as e:
+    except cloudscraper.exceptions.CloudflareException or requests_exceptions.RequestException as e:
         logger.warning("Bank holiday lookup failed: %s", e)
 
     ph_json = json.loads(response.text)
@@ -201,12 +198,14 @@ def convert_datetime_to_hm(dt):
 arrivals = []
 departures = []
 
+# use a single session for all ferry requests
+ferry_session = get_session()
+
 for ferry in FERRY_URLS:
     try:
-        session = get_session(ferry)
-        response = session.get(ferry, timeout=10)
+        response = ferry_session.get(ferry, timeout=10)
         response.raise_for_status()
-    except requests.RequestException as exc:
+    except cloudscraper.exceptions.CloudflareException or requests_exceptions.RequestException or requests_exceptions.HTTPError as exc:
         logger.warning("Ferry page fetch failed for %s: %s", format_env_url(ferry), exc)
         continue
     logger.info("Fetched ferry page: %s", format_env_url(ferry))
@@ -391,11 +390,11 @@ tt = TFL_TIMETABLE_URLS
 # for each timetable, north to south and south to north, load the JSON into an object we can use
 for timetable in tt:
     try:
-        session = get_session(timetable["url"])
+        session = get_session()
         response = session.get(timetable["url"], timeout=20)
         response.raise_for_status()
         payload = response.json()
-    except (requests.RequestException, ValueError) as exc:
+    except (cloudscraper.exceptions.CloudflareException, ValueError, requests_exceptions.RequestException) as exc:
         logger.warning("TfL timetable fetch failed for %s: %s", format_env_url(timetable["url"]), exc)
         continue
 
@@ -470,11 +469,11 @@ jmcm = JAMCAM_URLS
 # for each cam, north and south, load the JSON into an object we can use
 for jamcam in jmcm:
     try:
-        session = get_session(jamcam["url"])
+        session = get_session()
         response = session.get(jamcam["url"], timeout=10)
         response.raise_for_status()
         payload = response.json()
-    except (requests.RequestException, ValueError) as exc:
+    except (cloudscraper.exceptions.CloudflareException, ValueError, requests_exceptions.RequestException) as exc:
         logger.warning("JamCam fetch failed for %s: %s", format_env_url(jamcam["url"]), exc)
         continue
     # just in case the jamcam API is not working...
